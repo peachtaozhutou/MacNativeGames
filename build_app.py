@@ -1412,7 +1412,10 @@ def wait_until_closed(out, prefix=''):
     old_binary = out/'Contents/Resources/totk/build/totk-native'
     notified = 0
     while old_binary.is_file():
-        processes = subprocess.run(['ps', '-axo', 'comm='], capture_output=True, text=True, check=True).stdout.splitlines()
+        try:
+            processes = subprocess.run(['ps', '-axo', 'comm='], capture_output=True, text=True, check=True).stdout.splitlines()
+        except (OSError, subprocess.SubprocessError):
+            return   # ps is not available here (a sandboxed shell): nothing to wait for
         if str(old_binary.resolve()) not in (p.strip() for p in processes):
             break
         if time.monotonic()-notified >= 60:

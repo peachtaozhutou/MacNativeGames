@@ -591,6 +591,11 @@ static uint64_t g_game_sys;
 extern _Atomic int runtime_survey_pending;
 extern void runtime_survey_tick(uint64_t frame);
 extern const int32_t runtime_survey_sync[2];
+extern void runtime_maplink_frame(uint64_t frame);   /* read-only player position file (runtime/maplink.c); no-op unless enabled */
+/* Set once when the game presents its first real world frame (the same draw-count gate that holds the first frame behind
+   the loading screen). The map link uses it to tell the menu/loading placeholder player from the one in the world. */
+static _Atomic int g_world_ready;
+int runtime_world_ready(void) { return atomic_load_explicit(&g_world_ready, memory_order_relaxed); }
 /* TOTK_SURVEY_DEBUG=1: while a command is pending, the first 6 waited syncs, their thread and guest call chain, and where the
    system object holds them (pointer at sys+o, or inside / pointed to from the object at *(sys+o)). */
 static int vm_read8(uint64_t a, uint64_t *out);
@@ -3000,10 +3005,13 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
 #else
           const int warm_limit_ms = -1;
 #endif
-          gate = 1; extern void mtl_note_world(void); mtl_note_world(); int ms = mtl_warm_wait(warm_limit_ms);
+          gate = 1; atomic_store_explicit(&g_world_ready, 1, memory_order_relaxed);
+          extern void mtl_note_world(void); mtl_note_world(); int ms = mtl_warm_wait(warm_limit_ms);
+
           if (ms) LOG("[nvn] 首次进局等管线预热 %d ms（本帧绘制 %llu）", ms, (unsigned long long)this_draws);
       } }
     present_cfg(o);
+    runtime_maplink_frame(g_frame);   /* read-only map link; a load and a compare when no file is enabled */
     uint64_t t0 = now_ns();
     if (async_replay()) {   // TOTK: the present (and the replay frame number below) run on the translation thread, after this frame's submits
         xjob j = {.kind = XJ_PRESENT, .win = o, .idx = idx, .period = present_period(o) / 1e9};

@@ -179,6 +179,7 @@ void runtime_survey_init(Module *m) {
     (void)m;
     if (getenv("TOTK_SURVEY")) runtime_fail("survey: only Breath of the Wild 1.6.0 has the player position chains");
 }
+int runtime_survey_player(float xyz[3], float rot[9]) { (void)xyz; (void)rot; return 0; }   /* the TotK actor layout does not exist here */
 int runtime_survey_command(const char *line) { (void)line; return 0; }
 #endif
 #else
@@ -375,7 +376,19 @@ static uintptr_t player_actor(void) {
     }
     return 0;
 }
+/* Read-only access for the map link (runtime/maplink.c): the same verified actor lookup the survey uses, without any of
+   its test-profile gates and without touching the actor. Called on the present path, so the values belong to a frame the
+   game has just submitted. */
+int runtime_survey_player(float xyz[3], float rot[9]) {
+    if (!survey_main || !xyz) return 0;
+    uintptr_t actor = player_actor();
+    if (!actor || !read_mem(actor + ACTOR_POS, xyz, 3 * sizeof(float)) || !valid_xyz(xyz)) return 0;
+    if (rot && (!read_mem(actor + ACTOR_ROT, rot, 9 * sizeof(float)) || !isfinite(rot[0]) || !isfinite(rot[8]))) return 0;
+    return 1;
+}
 void runtime_survey_init(Module *m) {
+    /* The module base is needed for read-only position reads too (TOTK_SURVEY is not required for those). */
+    if (m && !strcmp(m->name, "main")) survey_main = (uintptr_t)m->base;
     const char *enabled = getenv("TOTK_SURVEY");
     if (!enabled || strcmp(enabled, "1")) return;
     const char *owner = getenv("TOTK_SLOT_OWNER"), *profile = getenv("TOTK_PROFILE_DIR");
