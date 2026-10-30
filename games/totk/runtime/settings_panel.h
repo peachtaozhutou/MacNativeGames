@@ -334,8 +334,7 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  /* The local game gateway (runtime/gateway.c, the wiki/interactive-map data source): off leaves it unstarted. Read by
     the launcher at start, so the next start applies it. */
  [rows addObject:settings_row(settings_text("Wiki 网关（重启生效）","Wiki gateway (next start)"),nil,nil,
-  ^int{char v[8];if(!runtime_setting_word("gateway.txt",v,sizeof v))return 1;v[strcspn(v,"
-")]=0;return !strcmp(v,"on");},
+  ^int{char v[8];if(!runtime_setting_word("gateway.txt",v,sizeof v))return 1;v[strcspn(v,"\r\n")]=0;return !strcmp(v,"on");},
   ^(int on){runtime_setting_save("gateway.txt",on?"on":"off","gateway");})];
  [rows addObject:settings_ssao_row()];
  NSUInteger display=rows.count;
