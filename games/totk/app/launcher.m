@@ -224,6 +224,12 @@ int main(int argc, char **argv) {
             if (line) { show_error([NSString stringWithFormat:@"%@, line %d: %s", controls, line, problem]); return 1; }
         }
         setenv("TOTK_CONTROLS", controls.fileSystemRepresentation, 1);
+        /* gateway.txt's "off" keeps the local game gateway (runtime/gateway.c) from starting; the settings panel
+           writes it, and the next start applies it. Anything else leaves the gateway on. */
+        { NSString *gateway = [controls.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"gateway.txt"];
+          NSString *word = [NSString stringWithContentsOfFile:gateway encoding:NSUTF8StringEncoding error:nil];
+          if (word && [[word stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] isEqualToString:@"off"])
+              setenv("TOTK_GATEWAY", "0", 1); }
         /* key 3's picture mode, kept between runs (runtime/game_patches_v143.c picture_mode_save / _restore) */
         setenv("TOTK_PICTURE_MODE", env_or("TOTK_PICTURE_MODE", [data stringByAppendingPathComponent:@"picture-mode.txt"]).fileSystemRepresentation, 1);
         setenv("TOTK_PROFILE_DIR", profile.fileSystemRepresentation, 1);
