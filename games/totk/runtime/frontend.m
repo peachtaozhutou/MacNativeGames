@@ -157,6 +157,18 @@ static CVReturn vsync_callback(CVDisplayLinkRef link,const CVTimeStamp *now,cons
  (void)link;(void)now;(void)output;(void)flags;(void)out;(void)ctx;
  pthread_mutex_lock(&vsyncLock);for(unsigned i=0;i<vsyncCount;i++)hle_signal_system_event(vsyncEvents[i]);pthread_mutex_unlock(&vsyncLock);return kCVReturnSuccess;
 }
+/* 1 / 0: the modifier key e (a flag change) is down / up; -1: not one the layout takes (Command, Caps Lock, fn). Each side
+   has its own device bit; a flag change without them (a synthesized event) goes by the shared flag. */
+static int front_modifier_down(NSEvent *e){
+ NSEventModifierFlags f=e.modifierFlags,shared;unsigned long side,pair;
+ switch(e.keyCode){
+  case 56:shared=NSEventModifierFlagShift;side=0x2;pair=0x6;break;case 60:shared=NSEventModifierFlagShift;side=0x4;pair=0x6;break;
+  case 59:shared=NSEventModifierFlagControl;side=0x1;pair=0x2001;break;case 62:shared=NSEventModifierFlagControl;side=0x2000;pair=0x2001;break;
+  case 58:shared=NSEventModifierFlagOption;side=0x20;pair=0x60;break;case 61:shared=NSEventModifierFlagOption;side=0x40;pair=0x60;break;
+  default:return -1;}
+ if(!(f&shared))return 0;
+ return f&pair?!!(f&side):1;
+}
 @interface TOTKInputView:NSView
 @property(strong) NSTimer *cursorHideTimer;
 @property BOOL cursorAutoHideActive;
@@ -169,8 +181,9 @@ static CVReturn vsync_callback(CVDisplayLinkRef link,const CVTimeStamp *now,cons
    menu) do anything; releases still go through so nothing stays held. */
 -(void)keyDown:(NSEvent *)e{if(textEntryOpen)return;if(settingsOpen&&e.keyCode!=18){if(e.keyCode==53)settings_show(0);return;}runtime_input_key(e.keyCode,1);}
 -(void)keyUp:(NSEvent *)e{runtime_input_key(e.keyCode,0);}
--(void)flagsChanged:(NSEvent *)e{int shift=!!(e.modifierFlags&NSEventModifierFlagShift),option=!!(e.modifierFlags&NSEventModifierFlagOption);
- if(e.keyCode==56&&(!(settingsOpen||textEntryOpen)||!shift))runtime_input_key(56,shift);if(e.keyCode==58&&(!(settingsOpen||textEntryOpen)||!option))runtime_input_key(58,option);}
+/* Shift, Control and Option, left and right apart, are keys of the layout (keyboard_map.h); they come as flag changes.
+   While the settings panel or text entry is open only their releases go through. */
+-(void)flagsChanged:(NSEvent *)e{int down=front_modifier_down(e);if(down>=0&&(!(settingsOpen||textEntryOpen)||!down))runtime_input_key(e.keyCode,down);}
 /* The game has no mouse controls. In native full screen, keep the pointer out of the picture while idle, but show it again
    as soon as it moves; restore it when the window loses focus or leaves full screen. */
 -(void)hideCursorIfIdle:(NSTimer *)timer{
@@ -247,6 +260,9 @@ enum { FPS_GRAPH_SAMPLES = 61, FPS_GRAPH_WIDTH = 220, FPS_GRAPH_HEIGHT = 90 };
    [a appendAttributedString:[[NSAttributedString alloc] initWithString:[([NSString stringWithUTF8String:t] ?: @"") stringByAppendingString:@"\n"] attributes:@{NSFontAttributeName:mono,NSForegroundColorAttributeName:hl?yellow:green}]];}
   if(!a.length)[a appendAttributedString:[[NSAttributedString alloc] initWithString:@"FPS --\n" attributes:@{NSFontAttributeName:mono,NSForegroundColorAttributeName:green}]];
   if(playtime)[a appendAttributedString:[[NSAttributedString alloc] initWithString:[playtime.text stringByAppendingString:@"\n"]
+   attributes:@{NSFontAttributeName:mono,NSForegroundColorAttributeName:green}]];
+  int bpct=runtime_gamepad_battery_percent(),bleft=runtime_gamepad_battery_left_percent();
+  if(bpct>=0)[a appendAttributedString:[[NSAttributedString alloc] initWithString:bleft>=0?[NSString stringWithFormat:@(TOTK_UI("手柄电量 左 %d%% 右 %d%%\n","Controller L %d%% R %d%%\n")),bleft,bpct]:[NSString stringWithFormat:@(TOTK_UI("手柄电量 %d%%\n","Controller %d%%\n")),bpct]
    attributes:@{NSFontAttributeName:mono,NSForegroundColorAttributeName:green}]];
   /* The commit the app was built from (user 2026-10-25), last and grey: TOTK_SOURCE_COMMIT from the launcher. */
   const char *commit=getenv("TOTK_SOURCE_COMMIT");
@@ -470,6 +486,7 @@ void runtime_front_resize_aspect(double ratio){
  if(totk_sr_closing)totk_sr_closing();
  [(TOTKInputView *)window.contentView setCursorAutoHideEnabled:NO];
  if(mouseHeld){mouseHeld=NO;CGAssociateMouseAndMouseCursorPosition(true);[NSCursor unhide];}
+ runtime_triggers_release();   /* _exit skips atexit; a save can also keep the game running a while without its window */
  if(!runtime_fs_save_busy()){fprintf(stderr,"[totk] window closed; graceful guest shutdown pending\n");_exit(0);}
  fprintf(stderr,"[totk] window closed while the game is saving: quitting when the save is done\n");
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
@@ -551,8 +568,9 @@ void runtime_front_run(void(*callback)(void)){
      corners by the present encoder (gfx/nvn/fps_overlay.c). The box sits under the opaque boot overlay until it is hidden. */
   TOTKHudBox *box=[[TOTKHudBox alloc] initWithFrame:NSZeroRect];box.autoresizingMask=NSViewMinXMargin|NSViewMinYMargin;
   [window.contentView addSubview:box positioned:NSWindowBelow relativeTo:bootOverlay];hudBox=box;
-  /* The settings panel's FPS graph switch, kept in fps-graph.txt next to controls.txt ("on" / "off", default off). */
-  {char word[16];if(runtime_setting_word("fps-graph.txt",word,sizeof word))fpsGraphEnabled=!strncmp(word,"on",2);}
+  /* The settings panel's FPS graph switch, one for both games (user 2026-10-29: "改成两个游戏共用 默认打开"): fps-graph.txt
+     in the folder above the game's ("on" / "off"), on when there is none. */
+  {char word[16];fpsGraphEnabled=1;if(runtime_shared_setting_word("fps-graph.txt",word,sizeof word))fpsGraphEnabled=!!strncmp(word,"off",3);}
   TOTKFpsGraph *graph=[[TOTKFpsGraph alloc] initWithFrame:NSZeroRect];[box addSubview:graph];fpsGraphBox=graph;[graph setEnabled:fpsGraphEnabled];[box refresh];
   [window makeFirstResponder:window.contentView];[window center];front_sync_drawable();
   if(assume_focus()){[window orderFrontRegardless];}else{[window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];}   /* in front of other apps' windows, keyboard left alone */
