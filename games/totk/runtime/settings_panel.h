@@ -12,9 +12,11 @@
      frame interpolation  off / 30+30 / 40+40 / 50+50 /      runtime flag mfx_interp (gfx/nvn/totk_mfx.m)
                           unlimited
      resolution           720p / 1080p / + MetalFX / 2K /    runtime_output_mode_set (game_patches*.c); the player picks,
-                          2K + MetalFX (a 4K screen)
-                                                             1080p is the start until a choice is saved; the window
-                                                             takes that size at once (settings_window_for)
+                          2K + MetalFX / native 4K (a 4K     1080p is the start until a choice is saved; the window
+                          heap overlay)                       takes that size at once (settings_window_for). Native 4K
+                                                              with the 4K texture pack loaded only saves: the pack's
+                                                              textures share the heaps, so the next start applies it
+                                                              (its title says so; user 2026-10-31)
      aspect ratio         16:9 / 16:10 / 21:9 / 32:9         runtime_aspect_set_ratio (aspect_patch.h, game_patches_botw.c);
                                                              the window takes that shape at once, its height kept
                                                              (runtime_front_resize_aspect; user 2026-10-25: no fitting the
@@ -64,6 +66,7 @@
 #include "keyboard_map.h"    /* the keyboard and mouse layout */
 #include "controller_map.h"  /* the controller layout */
 #include "feedback_settings.h"   /* feedback_word: ssao.txt */
+#include <unistd.h>   /* access: the texture pack's manifest, the native-4K gate */
 
 void dm_gfx_set_flag(const char *name, int value);
 void dm_gfx_ssao_start(int pct); int dm_gfx_ssao_locked(void); int dm_gfx_ssao_live(void); void dm_gfx_ssao_set(int pct);   /* totk_ssao.h */
@@ -281,6 +284,16 @@ static TOTKSettingRow *settings_ssao_row(void) {
   if(v)settings_save_int("ssao.txt",v,"ambient occlusion");else runtime_setting_save("ssao.txt","off","ambient occlusion");});
 #endif
 }
+/* The 4K texture pack this session: the launcher's final TOTK_ROMFS_MODS ("0" = off, the panel's switch wrote it) and
+   its manifest present. Its textures share the heaps the native-4K canvas grows into, so picking native 4K while it is
+   loaded only saves: the heap overlay mounts once, at boot, and the next start applies it (user 2026-10-31). */
+static BOOL settings_pack_active(void) {
+ const char *mods=getenv("TOTK_ROMFS_MODS");
+ if(!mods||!*mods||!strcmp(mods,"0"))return NO;
+ char path[4096];if((size_t)snprintf(path,sizeof path,"%s/manifest.tsv",mods)>=(sizeof path))return NO;
+ return access(path,R_OK)==0;
+}
+static void settings_pack_note(void);   /* the saved-and-waiting message; defined where the panel object lives */
 static NSArray<TOTKSettingRow *> *settings_rows(void) {
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray array];
  /* Display */
@@ -315,10 +328,16 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
    nw==2560&&nh==1440?settings_text("2K（2560×1440）","2K (2560×1440)"):
    [NSString stringWithFormat:@(TOTK_UI("原生 %u×%u","Native %u×%u")),nw,nh]];
   [resModes addObject:@(m)];}
+ /* The 4K texture pack this session: the launcher's final TOTK_ROMFS_MODS ("0" = off, the switch below wrote it) and
+    its manifest present. Its textures share the heaps the native-4K canvas grows into, so picking native 4K while it
+    is loaded only saves: the heap overlay mounts once, at boot, and the next start applies it (user 2026-10-31). */
  NSString *resolution=settings_text("分辨率","Resolution");
+ if(settings_pack_active())resolution=[resolution stringByAppendingString:settings_text("（原生 4K 重启生效）"," (native 4K at the next start)")];
  if(res.count<2)[rows addObject:settings_fixed(resolution,@"1080p")];
  else [rows addObject:settings_row(resolution,res,resModes,
-  ^int{return runtime_output_mode();},^(int v){settingsPendingOutput=-1;if(runtime_output_mode_set(v)){settings_window_for(v);settings_save_int("graphics-output.txt",v,"resolution");}})];
+  ^int{return runtime_output_mode();},^(int v){settingsPendingOutput=-1;
+   if(v==OUTPUT_MODE_NATIVE_4K&&settings_pack_active()){settings_save_int("graphics-output.txt",v,"resolution");settings_pack_note();return;}
+   if(runtime_output_mode_set(v)){settings_window_for(v);settings_save_int("graphics-output.txt",v,"resolution");}})];
  NSString *aspect=settings_text("画面比例","Aspect ratio");
  if(!(runtime_aspect_ratio()>0))[rows addObject:settings_fixed(aspect,@"16:9")];
  else{NSMutableArray<NSNumber *> *ratios=[@[@(16.0/9),@(16.0/10),@(21.0/9),@(32.0/9)] mutableCopy];
@@ -339,7 +358,7 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
   ^(int on){runtime_setting_save("gateway.txt",on?"on":"off","gateway");})];
  /* The RomFS mods (the 4K texture pack and anything else in <data>/mods/<version>): off leaves them unloaded. Read by
     the launcher at start (a RomFS overlay mounts once), so the next start applies it. */
- [rows addObject:settings_row(settings_text("4K 材质包与 mod（重启生效）","4K texture pack and mods (next start)"),nil,nil,
+ [rows addObject:settings_row(settings_text("4K 材质包（重启生效）","4K texture pack (next start)"),nil,nil,
   ^int{char v[8];if(!runtime_setting_word("4k-pack.txt",v,sizeof v))return 1;v[strcspn(v,"\r\n")]=0;return !strcmp(v,"on");},
   ^(int on){runtime_setting_save("4k-pack.txt",on?"on":"off","4K texture pack");})];
  [rows addObject:settings_ssao_row()];
@@ -1006,6 +1025,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
 @end
 
 static TOTKSettingsPanel *settingsPanel;
+static void settings_pack_note(void){[settingsPanel note:settings_text("原生 4K 已保存：与 4K 材质包同开，下次启动生效","Native 4K saved: with the texture pack loaded, the next start applies it")];}
 static void settings_refresh_all(void) { [settingsPanel refresh]; }
 /* A mouse click in the panel: the controller's highlight goes until a controller moves again. */
 static void settings_pointer_used(void) { if(!g_settings_controller_active)return;g_settings_controller_active=NO;[settingsPanel controllerHighlight]; }
