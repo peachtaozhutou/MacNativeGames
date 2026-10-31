@@ -337,6 +337,11 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  [rows addObject:settings_row(settings_text("Wiki 网关（重启生效）","Wiki gateway (next start)"),nil,nil,
   ^int{char v[8];if(!runtime_setting_word("gateway.txt",v,sizeof v))return 1;v[strcspn(v,"\r\n")]=0;return !strcmp(v,"on");},
   ^(int on){runtime_setting_save("gateway.txt",on?"on":"off","gateway");})];
+ /* The RomFS mods (the 4K texture pack and anything else in <data>/mods/<version>): off leaves them unloaded. Read by
+    the launcher at start (a RomFS overlay mounts once), so the next start applies it. */
+ [rows addObject:settings_row(settings_text("4K 材质包与 mod（重启生效）","4K texture pack and mods (next start)"),nil,nil,
+  ^int{char v[8];if(!runtime_setting_word("4k-pack.txt",v,sizeof v))return 1;v[strcspn(v,"\r\n")]=0;return !strcmp(v,"on");},
+  ^(int on){runtime_setting_save("4k-pack.txt",on?"on":"off","4K texture pack");})];
  [rows addObject:settings_ssao_row()];
  NSUInteger display=rows.count;
  /* Input */

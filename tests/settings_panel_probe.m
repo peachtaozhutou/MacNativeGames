@@ -265,7 +265,11 @@ int main(int argc, const char **argv) { @autoreleasepool {
     runtime_input_key_synthetic(18, 1); runtime_input_key_synthetic(18, 1); tick(); runtime_input_key_synthetic(18, 0); tick();
     assert(settingsOpen && fakeSettingsCapture && settingsPanel && !settingsPanel.hidden && settingsPanel.superview == window.contentView);
     assert(NSContainsRect(window.contentView.bounds, settingsPanel.frame));
-    assert(settingsPanel.allRows.count == 15);
+    /* 16 rows after the 4K texture pack row; the SSAO row (PR #1316, merged in 70512bf) had left this one behind. */
+    assert(settingsPanel.allRows.count == 17);
+    /* 4K texture pack and mods: a switch (on when nothing is saved), kept in 4k-pack.txt for the launcher. */
+    flip(@"4K texture pack", NO); assert(!strcmp(savedName, "4k-pack.txt") && !strcmp(savedWord, "off"));
+    flip(@"4K texture pack", YES); assert(!strcmp(savedName, "4k-pack.txt") && !strcmp(savedWord, "on"));
 
     /* FPS graph: a switch (here off at start; frontend.m turns it on when nothing is saved), kept in fps-graph.txt
        that both games share (user 2026-10-29). */
@@ -437,14 +441,15 @@ int main(int argc, const char **argv) { @autoreleasepool {
     /* Pages: Display, Input and Key bindings; the page shown last opens again. */
     press(18); assert(settingsOpen);
     [settingsPanel selectPage:SETTINGS_PAGE_DISPLAY];
-    assert(settingsPanel.rows.count == 8 && [settingsPanel.rows[0].title isEqualToString:@"Overlay"]);
+    /* 10 display rows after the SSAO row (PR #1316, merged in 70512bf) and the 4K texture pack row, which the drift had left behind. */
+    assert(settingsPanel.rows.count == 10 && [settingsPanel.rows[0].title isEqualToString:@"Overlay"]);
     /* The display page's bottom right: contribute shaders and star the project, after the rows for a controller; the
        version stays clear of them; a result shows for a moment where the version is. */
     NSButton *contribute = settingsPanel.displayButtons[1], *starButton = settingsPanel.displayButtons[0];
     assert([contribute.title isEqualToString:@"Contribute shaders and pipelines"] && [starButton.title isEqualToString:@"⭐ Star the project"]);
     assert(!contribute.hidden && !starButton.hidden && NSMaxX(contribute.frame) < NSMinX(starButton.frame) && NSMaxX(starButton.frame) <= settingsPanel.frame.size.width - 14);
     assert(NSMaxX(settingsPanel.versionLabel.frame) <= NSMinX(contribute.frame) && contribute.frame.origin.y < 34 && starButton.frame.origin.y < 34);
-    assert(settingsPanel.controllerTargets.count == 10 && settingsPanel.controllerTargets[8] == contribute && settingsPanel.controllerTargets[9] == starButton);
+    assert(settingsPanel.controllerTargets.count == 12 && settingsPanel.controllerTargets[10] == contribute && settingsPanel.controllerTargets[11] == starButton);
     NSString *versionText = settingsPanel.versionLabel.stringValue;
     [settingsPanel note:@"Thank you!"]; assert([settingsPanel.versionLabel.stringValue isEqualToString:@"Thank you!"]);
     settingsPanel.versionLabel.stringValue = versionText; settingsPanel.versionLabel.frame = NSMakeRect(18, 9, 230, 16);

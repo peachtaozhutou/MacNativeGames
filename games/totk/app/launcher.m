@@ -321,6 +321,12 @@ int main(int argc, char **argv) {
             !controller_connected())
             mods = keyboardMods;
         setenv("TOTK_ROMFS_MODS", mods.fileSystemRepresentation, 0);
+        /* 4k-pack.txt's "off" keeps the player's mods from loading (the settings panel writes it, and the next start
+           applies it; runtime/romfs.c reads "0" as none). Overwrite, so the panel wins over TOTK_ROMFS_MODS set outside. */
+        { NSString *pack = [controls.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"4k-pack.txt"];
+          NSString *word = [NSString stringWithContentsOfFile:pack encoding:NSUTF8StringEncoding error:nil];
+          if (word && [[word stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] isEqualToString:@"off"])
+              setenv("TOTK_ROMFS_MODS", "0", 1); }
         /* The game's language (runtime/services.c): the app's first preferred language, which also follows a per-app
            language (defaults write org.macnativegames.totk AppleLanguages -array pt-BR). TOTK_LANG still overrides it. */
         NSString *preferred = NSLocale.preferredLanguages.firstObject;
