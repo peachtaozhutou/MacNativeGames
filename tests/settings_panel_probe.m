@@ -651,7 +651,18 @@ int main(int argc, const char **argv) { @autoreleasepool {
     shows(@"Shadow resolution", @"Not in this version"); assert(!menu(@"Shadow resolution").enabled);
 #  endif
     shows(@"Render distance", @"Not in this version"); assert(!menu(@"Render distance").enabled);
-    shows(@"Effect switches", @"Not in this version"); shows(@"Sharpening", @"Not in this version");
+    shows(@"Effect switches", @"Not in this version");
+#ifdef TOTK_GAME_V121
+    /* 1.2.1: the FXAA, sharpening and depth of field switches are live here (the finisher's FXAA hook and patch_dof). */
+    assert(switched(@"FXAA anti-aliasing")); flip(@"FXAA anti-aliasing", NO); assert(!fakeFxaa && !strcmp(savedName, "graphics-fxaa.txt") && !strcmp(savedWord, "off"));
+    flip(@"FXAA anti-aliasing", YES); assert(fakeFxaa && !strcmp(savedWord, "on"));
+    assert(switched(@"Depth of field")); flip(@"Depth of field", NO); assert(!runtime_dof_on() && !strcmp(savedName, "graphics-dof.txt") && !strcmp(savedWord, "off"));
+    flip(@"Depth of field", YES); assert(runtime_dof_on() && !strcmp(savedWord, "on"));
+    shows(@"Sharpening", @"Off (as the game has it)"); pick(@"Sharpening", @"50%"); assert(fakeSharpen == 50 && !strcmp(savedName, "graphics-sharpen.txt") && !strcmp(savedWord, "50"));
+    pick(@"Sharpening", @"Off (as the game has it)"); assert(!fakeSharpen);
+#else
+    shows(@"Sharpening", @"Not in this version");
+#endif
 #endif
     /* Anisotropic filtering (effects page, every version): in force at once. */
     shows(@"Anisotropic filtering", @"Off (as the game has it)");

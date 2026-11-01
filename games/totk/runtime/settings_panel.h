@@ -443,12 +443,16 @@ static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
  return rows;
 }
 #elif defined(TOTK_GAME_V121)
-static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {   /* 1.2.1: only the depth of field switch is live here (game_patches.c's patch_dof); 1.4.3's game patches are not on this version */
+static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {   /* 1.2.1: the depth of field, FXAA and sharpening switches are live (patch_dof; the finisher's FXAA hook — the game's FXAA shader hash 22a61cb1 is in 1.2.1's seed); 1.4.3's game patches are not here */
  NSString *none=settings_text("这个版本没有","Not in this version");
  return @[settings_fixed(settings_text("视野（FOV）","Field of view (FOV)"),none),settings_fixed(settings_text("模型细节距离（LOD）","Model detail distance (LOD)"),none),settings_fixed(settings_text("渲染距离","Render distance"),none),settings_fixed(settings_text("阴影分辨率","Shadow resolution"),none),
+          settings_row(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),nil,nil,^int{return dm_gfx_fxaa_on();},^(int v){
+           dm_gfx_fxaa_set(v);runtime_setting_save("graphics-fxaa.txt",v?"on":"off","FXAA");}),
           settings_row(settings_text("景深","Depth of field"),nil,nil,^int{return runtime_dof_on();},^(int v){
            runtime_dof_set(v);runtime_setting_save("graphics-dof.txt",v?"on":"off","depth of field");}),
-          settings_fixed(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),none),settings_fixed(settings_text("锐化","Sharpening"),none),settings_fixed(settings_text("效果开关","Effect switches"),none)];
+          settings_row(settings_text("锐化","Sharpening"),@[settings_text("关（游戏原样）","Off (as the game has it)"),@"25%",@"50%",@"75%",@"100%"],@[@0,@25,@50,@75,@100],
+           ^int{return dm_gfx_sharpen();},^(int v){dm_gfx_sharpen_set(v);settings_save_int("graphics-sharpen.txt",v,"sharpening");}),
+          settings_fixed(settings_text("效果开关","Effect switches"),none)];
 }
 #else
 static TOTKSettingRow *settings_botw_shadow_row(void);   /* below: Breath of the Wild 1.9.0's, greyed elsewhere */
