@@ -111,9 +111,9 @@ double runtime_lod_scale(void); void runtime_lod_scale_set(double k); int runtim
 double runtime_far_scale(void); void runtime_far_scale_set(double k); int runtime_far_scale_locked(void);
 double runtime_fov_scale(void); void runtime_fov_scale_set(double k); int runtime_fov_scale_locked(void); int runtime_fov_available(void);
 double runtime_shadow_scale(void); void runtime_shadow_scale_set(double k); int runtime_shadow_scale_locked(void);
-void runtime_dof_set(int on); int runtime_dof_on(void);   /* game_patches_v143.c */
-void dm_gfx_fxaa_set(int on); int dm_gfx_fxaa_on(void); void dm_gfx_sharpen_set(int pct); int dm_gfx_sharpen(void);   /* gfx/nvn/totk_finish.h */
 #endif
+void runtime_dof_set(int on); int runtime_dof_on(void);   /* game_patches_v143.c / game_patches.c (1.2.1) */
+void dm_gfx_fxaa_set(int on); int dm_gfx_fxaa_on(void); void dm_gfx_sharpen_set(int pct); int dm_gfx_sharpen(void);   /* gfx/nvn/totk_finish.h */
 int nvn_fps_lock(void);
 
 /* Picking a resolution sizes the window to it at once (user 2026-10-25): 720p 1280x720, 1080p 1920x1080, MetalFX 2560x1440, native its own size (2K), 2K + MetalFX and native 4K 3840x2160, in the window's points as the first window (frontend.m runtime_front_run), the picture's shape kept
@@ -172,35 +172,45 @@ static void settings_ssao_restore(void) {
  settingsSsao=(int)pct;dm_gfx_ssao_start(settingsSsao);
 #endif
 }
-/* The effects page: graphics-effects.txt holds the ids of the effects that are off, one word each ("none" when all are
-   on); graphics-lod.txt the model detail distance x100, graphics-far.txt the render distance in percent (0.1 to 100). */
-#ifdef TOTK_GAME_V143
-/* "Always the finest": a factor no distance in the map reaches, so a model keeps the level it has up close. */
-#define SETTINGS_LOD_MAX 1e6
+/* The effects page: graphics-effects.txt holds the ids of the effects that are off (their switches live on the
+   effects page); graphics-lod.txt the model detail distance x100, graphics-far.txt the camera far plane x1000,
+   graphics-fov.txt the field of view x100, graphics-shadow.txt the shadow resolution x100, graphics-fxaa.txt and
+   graphics-sharpen.txt the switches, graphics-dof.txt the depth of field (1.2.1's comes from game_patches.c). */
+#if defined(TOTK_GAME_V143) || defined(TOTK_GAME_V121)   /* 1.4.3's game patches, 1.2.1's depth of field */
 static int settings_read_number(const char *name, double lo, double hi, double *value) {
  char word[32],*end;if(!runtime_setting_word(name,word,sizeof word))return 0;
  double d=strtod(word,&end);while(*end==' '||*end=='\n'||*end=='\r'||*end=='\t')end++;
  if(end==word||*end||!(d>=lo&&d<=hi))return 0;*value=d;return 1;
 }
+#ifdef TOTK_GAME_V143
+/* "Always the finest": a factor no distance in the map reaches, so a model keeps the level it has up close. */
+#define SETTINGS_LOD_MAX 1e6
+#endif
+#ifdef TOTK_GAME_V143
 static void settings_effects_save(void) {
  char line[512]="";size_t n=0;
  for(int i=0;i<dm_gfx_fx_count();i++)if(!dm_gfx_fx_on(i))n+=(size_t)snprintf(line+n,sizeof line-n,"%s%s",n?" ":"",dm_gfx_fx_id(i));
  runtime_setting_save("graphics-effects.txt",n?line:"none","effects");
 }
+#endif
 static void settings_effects_restore(void) {
+ double d;char word[16];
+#ifdef TOTK_GAME_V143
  char line[512];
  if(runtime_setting_word("graphics-effects.txt",line,sizeof line))
   for(char *w=strtok(line," \t\r\n");w;w=strtok(NULL," \t\r\n"))
    for(int i=0;i<dm_gfx_fx_count();i++)if(!strcmp(w,dm_gfx_fx_id(i)))dm_gfx_fx_set(i,0);
- double d;char word[16];
  if(!runtime_lod_scale_locked()&&runtime_setting_word("graphics-lod.txt",word,sizeof word)&&!strncmp(word,"max",3))runtime_lod_scale_set(SETTINGS_LOD_MAX);
  else if(!runtime_lod_scale_locked()&&settings_read_number("graphics-lod.txt",100,10000,&d))runtime_lod_scale_set(d/100);
  if(!runtime_fov_scale_locked()&&settings_read_number("graphics-fov.txt",50,200,&d))runtime_fov_scale_set(d/100);
  if(!runtime_shadow_scale_locked()&&settings_read_number("graphics-shadow.txt",25,800,&d))runtime_shadow_scale_set(d/100);
+#endif
  if(runtime_setting_word("graphics-fxaa.txt",word,sizeof word)&&!strncmp(word,"off",3))dm_gfx_fxaa_set(0);
  if(settings_read_number("graphics-sharpen.txt",0,100,&d))dm_gfx_sharpen_set((int)d);
  if(runtime_setting_word("graphics-dof.txt",word,sizeof word)&&!strncmp(word,"off",3))runtime_dof_set(0);
+#ifdef TOTK_GAME_V143
  if(!runtime_far_scale_locked()&&settings_read_number("graphics-far.txt",0.1,1000,&d))runtime_far_scale_set(d/100);
+#endif
 }
 #else
 static void settings_effects_restore(void) {}
@@ -363,7 +373,7 @@ static TOTKSettingRow *settings_ssao_row(void) {
 #endif
 }
 /* The effects page: the two distances (1.4.3), then a switch per effect (a greyed "not in this version" when the game's
-   shaders are not the ones the switches know). */
+   shaders are not the ones the switches know); 1.2.1 gets the depth of field switch (game_patches.c's patch_dof). */
 #ifdef TOTK_GAME_V143
 static TOTKSettingRow *settings_distance_row(int lod) {
  NSString *t=lod?settings_text("模型细节距离（LOD）","Model detail distance (LOD)"):settings_text("渲染距离","Render distance");
@@ -418,7 +428,6 @@ static TOTKSettingRow *settings_shadow_row(void) {
 }
 static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_fov_row(),settings_distance_row(1),settings_distance_row(0),settings_shadow_row(),nil];
- /* FXAA (the game's edge smoothing of the 3D picture) and sharpening (FSR 1 RCAS on the 3D picture, not the UI) */
  [rows addObject:settings_row(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),nil,nil,^int{return dm_gfx_fxaa_on();},^(int v){
   dm_gfx_fxaa_set(v);runtime_setting_save("graphics-fxaa.txt",v?"on":"off","FXAA");})];
  [rows addObject:settings_row(settings_text("景深","Depth of field"),nil,nil,^int{return runtime_dof_on();},^(int v){
@@ -433,9 +442,19 @@ static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
  }
  return rows;
 }
+#elif defined(TOTK_GAME_V121)
+static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {   /* 1.2.1: only the depth of field switch is live here (game_patches.c's patch_dof); 1.4.3's game patches are not on this version */
+ NSString *none=settings_text("这个版本没有","Not in this version");
+ return @[settings_fixed(settings_text("视野（FOV）","Field of view (FOV)"),none),settings_fixed(settings_text("模型细节距离（LOD）","Model detail distance (LOD)"),none),settings_fixed(settings_text("渲染距离","Render distance"),none),settings_fixed(settings_text("阴影分辨率","Shadow resolution"),none),
+          settings_row(settings_text("景深","Depth of field"),nil,nil,^int{return runtime_dof_on();},^(int v){
+           runtime_dof_set(v);runtime_setting_save("graphics-dof.txt",v?"on":"off","depth of field");}),
+          settings_fixed(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),none),settings_fixed(settings_text("锐化","Sharpening"),none),settings_fixed(settings_text("效果开关","Effect switches"),none)];
+}
 #else
 static TOTKSettingRow *settings_botw_shadow_row(void);   /* below: Breath of the Wild 1.9.0's, greyed elsewhere */
 static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {   /* other versions: the page says so */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
  NSString *none=settings_text("这个版本没有","Not in this version");
  return @[settings_botw_shadow_row(),settings_fixed(settings_text("景深","Depth of field"),none),settings_fixed(settings_text("视野（FOV）","Field of view (FOV)"),none),settings_fixed(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),none),settings_fixed(settings_text("锐化","Sharpening"),none),settings_fixed(settings_text("模型细节距离（LOD）","Model detail distance (LOD)"),none),settings_fixed(settings_text("渲染距离","Render distance"),none),
           settings_fixed(settings_text("效果开关","Effect switches"),none)];
@@ -476,7 +495,7 @@ static void settings_effects_reset(void) {
 /* Sun shadows (Breath of the Wild 1.9.0, botw_shadow_res.h): the game's sizes or 2048 per cascade. The game sizes its map
    once, at the start, so the row shows and saves the next launch's choice, never this run's. Where the patch does not act
    (the iOS export's run) the row offers nothing to save. On the effects page of the other versions (TOTK 1.4.3 has its own). */
-#ifndef TOTK_GAME_V143
+#if !defined(TOTK_GAME_V143) && !defined(TOTK_GAME_V121)
 static TOTKSettingRow *settings_botw_shadow_row(void) {
  NSString *t=settings_text("阴影分辨率","Shadow resolution");
 #ifndef GAME_BOTW190

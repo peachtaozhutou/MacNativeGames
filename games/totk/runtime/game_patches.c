@@ -471,6 +471,46 @@ static void output_size_set(uint64_t want) {
     fprintf(stderr, "[totk] the game's output %ux%u%s%s\n", (unsigned)want, (unsigned)(want >> 32),
             renderer ? " from the next layout" : "; the game has not laid out its displays yet, it takes this size when it does", before);
 }
+/* Depth of field off (Mac, the settings panel's effects page — the 1.4.3 mechanism on 1.2.1's addresses, 2026-11-01):
+   the game's DOF requester (main+0xb5034c, its first instruction ldr w10,[x0,#8]; what the ExecuteCameraSetDof and
+   ExecuteCameraSetCoCDof event commands store) and the multi-type request store (main+0x1bd535c, entry stp
+   x29,x30,[sp,#-0x60]!) each get a stub that returns at once while the switch is off (data page +0x19c), and runs the
+   original instruction otherwise; both originals and their next instruction are checked first. graphics-dof.txt keeps
+   the choice; "Reset to defaults" turns it back on. The sites were found by fingerprinting 1.4.3's request store
+   (slot stride 0x180, params stride 0x24, the +0xb4 atomic OR loop) in 1.2.1's main — map_version_sites.py --code
+   had no match (1.2.1 rewrote the request code). */
+#if defined(TOTK_GAME_V121)
+#define DOF_DATA_SLOT 0x19cu
+static _Atomic uint32_t *dof_flag;
+static int dof_off;
+static void patch_dof(Module *m){
+    if(CODE_PATCHED_AT_BUILD)return;
+    static const uint64_t dof_sites[2][2]={{0xb5034c,0xb940080a},{0x1bd535c,0xa9ba7bfd}};   /* entry, its first instruction */
+    static const uint64_t dof_next[2]={0xb50350,0x1bd5360};   /* the instruction after each entry */
+    static const uint32_t dof_orig[2]={0xb940080a,0xa9ba7bfd},dof_next_word[2]={0x36f803e3,0xf9000bfb};
+    uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+0x40;
+    if(stub+48>data||data+DOF_DATA_SLOT+4>m->size)runtime_fail("1.2.1 depth of field layout");
+    for(unsigned i=0;i<48;i++)if(m->base[stub+i])runtime_fail("1.2.1 depth of field padding not empty");
+    for(unsigned i=0;i<2;i++){uint32_t w,n;memcpy(&w,m->base+dof_sites[i][0],4);memcpy(&n,m->base+dof_next[i],4);
+        if(w!=dof_orig[i]||n!=dof_next_word[i])runtime_fail("1.2.1 depth of field: the DOF requester does not match");}
+    for(unsigned i=0;i<2;i++){
+        uint64_t at=stub+i*24,site=dof_sites[i][0];
+        uint32_t words[6]={
+            adrp_x9((uintptr_t)m->base+at,(uintptr_t)m->base+data),
+            0xb9400129|((DOF_DATA_SLOT/4)<<10),     /* ldr w9,[x9,#0x19c]: DOF off? */
+            0x35000069,                             /* cbnz w9, +12 (the ret: no request stored) */
+            dof_orig[i],                            /* the first instruction */
+            branch_to(at+16,site+4),
+            0xd65f03c0};                            /* ret */
+        memcpy(m->base+at,words,sizeof words);
+    }
+    dof_flag=(_Atomic uint32_t *)(void *)(m->base+data+DOF_DATA_SLOT);atomic_store(dof_flag,(uint32_t)dof_off);
+    for(unsigned i=0;i<2;i++){uint32_t j=branch_to(dof_sites[i][0],stub+i*24);memcpy(m->base+dof_sites[i][0],&j,4);}
+    fprintf(stderr,"[totk] 1.2.1 depth of field %s (requests at main+0xb5034c / 0x1bd535c), stub +%#llx\n",dof_off?"off":"on",(unsigned long long)stub);
+}
+void runtime_dof_set(int on){dof_off=!on;if(dof_flag)atomic_store(dof_flag,(uint32_t)dof_off);fprintf(stderr,"[totk] depth of field %s\n",on?"on":"off");}
+int runtime_dof_on(void){return !dof_off;}
+#endif
 /* The settings panel's resolution (runtime.h OUTPUT_MODE_*): 1080p, 1080p with the MetalFX output scaler, or the game's
    canvas and UI at the native size (up to the swapchain's, 2K), the same with the MetalFX output scaler up to the window (a 4K
    screen), or 720p, a 1280x720 canvas (the scene scales with it); native 4K is the same idea at 3840x2160 when the app
@@ -834,6 +874,9 @@ void runtime_game_patches(Module *m) {
     else fprintf(stderr,"[totk] real-time frame step off (TOTK_REALTIME=0)\n");
     patch_render_res(m);
     patch_output_res(m);
+#if defined(TOTK_GAME_V121)
+    patch_dof(m);
+#endif
     patch_slowmo_bounce(m);
 #if defined(TOTK_GAME_V121)
     patch_cursor_speed(m);
