@@ -108,11 +108,11 @@ void nvn_fps_lock_set(int fps);   /* gfx/nvn/hle_nvn.c: the shared totk_fps_limi
 int dm_gfx_fx_count(void); const char *dm_gfx_fx_id(int i); const char *dm_gfx_fx_name(int i, int english);   /* totk_fx.h */
 int dm_gfx_fx_available(int i); int dm_gfx_fx_on(int i); void dm_gfx_fx_set(int i, int on);
 double runtime_lod_scale(void); void runtime_lod_scale_set(double k); int runtime_lod_scale_locked(void);   /* game_patches_v143.c */
-double runtime_far_scale(void); void runtime_far_scale_set(double k); int runtime_far_scale_locked(void);
-double runtime_fov_scale(void); void runtime_fov_scale_set(double k); int runtime_fov_scale_locked(void); int runtime_fov_available(void);
 double runtime_shadow_scale(void); void runtime_shadow_scale_set(double k); int runtime_shadow_scale_locked(void);
 #endif
 void runtime_dof_set(int on); int runtime_dof_on(void);   /* game_patches_v143.c / game_patches.c (1.2.1) */
+double runtime_far_scale(void); void runtime_far_scale_set(double k); int runtime_far_scale_locked(void);   /* game_patches_v143.c / game_patches.c (1.2.1) */
+double runtime_fov_scale(void); void runtime_fov_scale_set(double k); int runtime_fov_scale_locked(void); int runtime_fov_available(void);
 void dm_gfx_fxaa_set(int on); int dm_gfx_fxaa_on(void); void dm_gfx_sharpen_set(int pct); int dm_gfx_sharpen(void);   /* gfx/nvn/totk_finish.h */
 int nvn_fps_lock(void);
 
@@ -177,6 +177,7 @@ static void settings_ssao_restore(void) {
    graphics-fov.txt the field of view x100, graphics-shadow.txt the shadow resolution x100, graphics-fxaa.txt and
    graphics-sharpen.txt the switches, graphics-dof.txt the depth of field (1.2.1's comes from game_patches.c). */
 #if defined(TOTK_GAME_V143) || defined(TOTK_GAME_V121)   /* 1.4.3's game patches, 1.2.1's depth of field */
+
 static int settings_read_number(const char *name, double lo, double hi, double *value) {
  char word[32],*end;if(!runtime_setting_word(name,word,sizeof word))return 0;
  double d=strtod(word,&end);while(*end==' '||*end=='\n'||*end=='\r'||*end=='\t')end++;
@@ -202,15 +203,13 @@ static void settings_effects_restore(void) {
    for(int i=0;i<dm_gfx_fx_count();i++)if(!strcmp(w,dm_gfx_fx_id(i)))dm_gfx_fx_set(i,0);
  if(!runtime_lod_scale_locked()&&runtime_setting_word("graphics-lod.txt",word,sizeof word)&&!strncmp(word,"max",3))runtime_lod_scale_set(SETTINGS_LOD_MAX);
  else if(!runtime_lod_scale_locked()&&settings_read_number("graphics-lod.txt",100,10000,&d))runtime_lod_scale_set(d/100);
- if(!runtime_fov_scale_locked()&&settings_read_number("graphics-fov.txt",50,200,&d))runtime_fov_scale_set(d/100);
  if(!runtime_shadow_scale_locked()&&settings_read_number("graphics-shadow.txt",25,800,&d))runtime_shadow_scale_set(d/100);
 #endif
+ if(!runtime_fov_scale_locked()&&settings_read_number("graphics-fov.txt",50,200,&d))runtime_fov_scale_set(d/100);
+ if(!runtime_far_scale_locked()&&settings_read_number("graphics-far.txt",0.1,1000,&d))runtime_far_scale_set(d/100);
  if(runtime_setting_word("graphics-fxaa.txt",word,sizeof word)&&!strncmp(word,"off",3))dm_gfx_fxaa_set(0);
  if(settings_read_number("graphics-sharpen.txt",0,100,&d))dm_gfx_sharpen_set((int)d);
  if(runtime_setting_word("graphics-dof.txt",word,sizeof word)&&!strncmp(word,"off",3))runtime_dof_set(0);
-#ifdef TOTK_GAME_V143
- if(!runtime_far_scale_locked()&&settings_read_number("graphics-far.txt",0.1,1000,&d))runtime_far_scale_set(d/100);
-#endif
 }
 #else
 static void settings_effects_restore(void) {}
@@ -372,6 +371,34 @@ static TOTKSettingRow *settings_ssao_row(void) {
   if(v)settings_save_int("ssao.txt",v,"ambient occlusion");else runtime_setting_save("ssao.txt","off","ambient occlusion");});
 #endif
 }
+#if defined(TOTK_GAME_V143) || defined(TOTK_GAME_V121)   /* the live FOV / render distance rows; greyed rows for the other versions are below */
+/* The game camera's field of view, in hundredths of the game's own (its zooms scale with it). */
+static TOTKSettingRow *settings_fov_row(void) {
+ NSString *t=settings_text("视野（FOV）","Field of view (FOV)");
+ NSString *(^text)(int)=^NSString *(int v){return v==100?settings_text("1×（游戏原样）","1x (as the game has it)"):[NSString stringWithFormat:@"%g×",v/100.0];};
+ int now=(int)lround(runtime_fov_scale()*100);
+ if(runtime_fov_scale_locked())return settings_fixed(t,text(now));
+ if(!runtime_fov_available())return settings_fixed(t,settings_text("游戏原样（Vert+ 开着）","As the game has it (Vert+ is on)"));
+ NSMutableArray<NSNumber *> *values=[@[@80,@90,@100,@110,@120,@130,@140,@150] mutableCopy];
+ if(![values containsObject:@(now)])[values addObject:@(now)];
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(t,choices,values,^int{return (int)lround(runtime_fov_scale()*100);},^(int v){runtime_fov_scale_set(v/100.0);settings_save_int("graphics-fov.txt",v,"field of view");});
+}
+
+/* The camera's far plane, in thousandths of the game's own (25000). */
+static TOTKSettingRow *settings_far_row(void) {
+ NSString *t=settings_text("渲染距离","Render distance");
+ NSString *(^text)(int)=^NSString *(int v){return v==1000?settings_text("1×（游戏原样）","1x (as the game has it)"):[NSString stringWithFormat:@"%g×",v/1000.0];};
+ int now=(int)lround(runtime_far_scale()*1000);
+ if(runtime_far_scale_locked())return settings_fixed(t,text(now));
+ NSMutableArray<NSNumber *> *values=[@[@1000,@2000,@3000,@4000,@5000,@6000,@7000,@8000,@9000,@10000] mutableCopy];
+ if(![values containsObject:@(now)])[values addObject:@(now)];
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(t,choices,values,^int{return (int)lround(runtime_far_scale()*1000);},^(int v){
+  char word[16];snprintf(word,sizeof word,"%g",v/10.0);runtime_far_scale_set(v/1000.0);runtime_setting_save("graphics-far.txt",word,"render distance");});
+}
+#endif
+
 /* The effects page: the two distances (1.4.3), then a switch per effect (a greyed "not in this version" when the game's
    shaders are not the ones the switches know); 1.2.1 gets the depth of field switch (game_patches.c's patch_dof). */
 #ifdef TOTK_GAME_V143
@@ -394,18 +421,6 @@ static TOTKSettingRow *settings_distance_row(int lod) {
   else if(lod){runtime_lod_scale_set(v/100.0);settings_save_int("graphics-lod.txt",v,"model detail distance");}
   else{char word[16];snprintf(word,sizeof word,"%g",v/10.0);runtime_far_scale_set(v/1000.0);runtime_setting_save("graphics-far.txt",word,"render distance");}});
 }
-/* The game camera's field of view, in hundredths of the game's own (its zooms scale with it). */
-static TOTKSettingRow *settings_fov_row(void) {
- NSString *t=settings_text("视野（FOV）","Field of view (FOV)");
- NSString *(^text)(int)=^NSString *(int v){return v==100?settings_text("1×（游戏原样）","1x (as the game has it)"):[NSString stringWithFormat:@"%g×",v/100.0];};
- int now=(int)lround(runtime_fov_scale()*100);
- if(runtime_fov_scale_locked())return settings_fixed(t,text(now));
- if(!runtime_fov_available())return settings_fixed(t,settings_text("游戏原样（Vert+ 开着）","As the game has it (Vert+ is on)"));
- NSMutableArray<NSNumber *> *values=[@[@80,@90,@100,@110,@120,@130,@140,@150] mutableCopy];
- if(![values containsObject:@(now)])[values addObject:@(now)];
- NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
- return settings_row(t,choices,values,^int{return (int)lround(runtime_fov_scale()*100);},^(int v){runtime_fov_scale_set(v/100.0);settings_save_int("graphics-fov.txt",v,"field of view");});
-}
 /* The sun's shadows: off (the effect switch "shadow": the shadow term lit) or their maps' resolution, x1 being the game's
    800 x 800 per cascade; graphics-shadow.txt holds the resolution (x100), graphics-effects.txt whether they are off. */
 static int settings_fx_index(const char *id) { for(int i=0;i<dm_gfx_fx_count();i++)if(!strcmp(dm_gfx_fx_id(i),id))return i; return -1; }
@@ -427,7 +442,7 @@ static TOTKSettingRow *settings_shadow_row(void) {
   settings_effects_save();});
 }
 static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
- NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_fov_row(),settings_distance_row(1),settings_distance_row(0),settings_shadow_row(),nil];
+ NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_fov_row(),settings_distance_row(1),settings_far_row(),settings_shadow_row(),nil];
  [rows addObject:settings_row(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),nil,nil,^int{return dm_gfx_fxaa_on();},^(int v){
   dm_gfx_fxaa_set(v);runtime_setting_save("graphics-fxaa.txt",v?"on":"off","FXAA");})];
  [rows addObject:settings_row(settings_text("景深","Depth of field"),nil,nil,^int{return runtime_dof_on();},^(int v){
@@ -445,7 +460,7 @@ static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
 #elif defined(TOTK_GAME_V121)
 static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {   /* 1.2.1: the depth of field, FXAA and sharpening switches are live (patch_dof; the finisher's FXAA hook — the game's FXAA shader hash 22a61cb1 is in 1.2.1's seed); 1.4.3's game patches are not here */
  NSString *none=settings_text("这个版本没有","Not in this version");
- return @[settings_fixed(settings_text("视野（FOV）","Field of view (FOV)"),none),settings_fixed(settings_text("模型细节距离（LOD）","Model detail distance (LOD)"),none),settings_fixed(settings_text("渲染距离","Render distance"),none),settings_fixed(settings_text("阴影分辨率","Shadow resolution"),none),
+ return @[settings_fov_row(),settings_fixed(settings_text("模型细节距离（LOD）","Model detail distance (LOD)"),none),settings_far_row(),settings_fixed(settings_text("阴影分辨率","Shadow resolution"),none),
           settings_row(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),nil,nil,^int{return dm_gfx_fxaa_on();},^(int v){
            dm_gfx_fxaa_set(v);runtime_setting_save("graphics-fxaa.txt",v?"on":"off","FXAA");}),
           settings_row(settings_text("景深","Depth of field"),nil,nil,^int{return runtime_dof_on();},^(int v){

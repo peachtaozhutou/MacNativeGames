@@ -510,6 +510,53 @@ static void patch_dof(Module *m){
 }
 void runtime_dof_set(int on){dof_off=!on;if(dof_flag)atomic_store(dof_flag,(uint32_t)dof_off);fprintf(stderr,"[totk] depth of field %s\n",on?"on":"off");}
 int runtime_dof_on(void){return !dof_off;}
+
+/* FOV and render distance (Mac, the settings panel's effects page — the 1.4.3 mechanism on 1.2.1's addresses,
+   2026-11-01): the game's display camera params load the far plane ([x19,#0x138]) and the field of view
+   ([x19,#0x13c]) at main+0xcb4acc / 0xcb4ad8; each load is replaced by a stub that loads, multiplies by the factor
+   from the data page (slots +0x30 / +0x34), and returns to the next instruction; both originals and their next
+   instruction are checked first. graphics-fov.txt (x100) and graphics-far.txt (x1000) keep the choices. The sites:
+   map_version_sites.py --code had no match (1.2.1 rewrote the camera layout code), so they were found by
+   fingerprinting 1.4.3's camera function (the +0x134/0x138/0x13c/0x140 param loads into the +0x98/0x9c/0xa0
+   outputs, the fmov 0.5 half-angle, the fmul s8,s0,s1) in 1.2.1's main. */
+#if defined(TOTK_GAME_V121)
+#define FOV_DATA_SLOT 0x30u
+#define FAR_DATA_SLOT 0x34u
+static _Atomic uint32_t *fov_factor,*far_factor;
+static double fov_k=1,far_k=1;
+static void factor_store(_Atomic uint32_t *slot,double k){float f=(float)k;uint32_t bits;memcpy(&bits,&f,4);atomic_store(slot,bits);}
+static void patch_fov_far(Module *m){
+    if(CODE_PATCHED_AT_BUILD)return;
+    static const uint64_t sites[2]={0xcb4acc,0xcb4ad8};
+    static const uint32_t orig[2]={0xbd413a60,0xbd413e60},next[2]={0x39002295,0x1e210808};
+    uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+0x70;
+    if(stub+48>data||data+FAR_DATA_SLOT+8>m->size)runtime_fail("1.2.1 fov / render distance layout");
+    for(unsigned i=0;i<48;i++)if(m->base[stub+i])runtime_fail("1.2.1 fov / render distance padding not empty");
+    for(unsigned i=0;i<2;i++){uint32_t w,n;memcpy(&w,m->base+sites[i],4);memcpy(&n,m->base+sites[i]+4,4);
+        if(w!=orig[i]||n!=next[i])runtime_fail("1.2.1 fov / render distance: the camera params do not match");}
+    for(unsigned i=0;i<2;i++){
+        uint64_t at=stub+i*24,slot=i?FAR_DATA_SLOT:FOV_DATA_SLOT;
+        uint32_t words[6]={
+            orig[i],                                 /* ldr s0, [x19, #+0x138 / 0x13c]: the game's own value */
+            adrp_x9((uintptr_t)m->base+at+4,(uintptr_t)m->base+data),
+            0xbd000100|((slot+4)/4)<<10,             /* str s0, [x8, #+slot+4]: store the game's own */
+            0xbd400102|(slot/4)<<10,                 /* ldr s2, [x8, #+slot]: the factor */
+            0x1e220800,                              /* fmul s0, s0, s2 */
+            branch_to(at+20,sites[i]+4)};
+        memcpy(m->base+at,words,sizeof words);
+    }
+    fov_factor=(_Atomic uint32_t *)(void *)(m->base+data+FOV_DATA_SLOT);factor_store(fov_factor,fov_k);
+    far_factor=(_Atomic uint32_t *)(void *)(m->base+data+FAR_DATA_SLOT);factor_store(far_factor,far_k);
+    fprintf(stderr,"[totk] 1.2.1 fov x%g and render distance x%g (loads at main+0xcb4ad8 / 0xcb4acc), stub +%#llx\n",fov_k,far_k,(unsigned long long)stub);
+}
+void runtime_fov_scale_set(double k){fov_k=k;if(fov_factor)factor_store(fov_factor,k);fprintf(stderr,"[totk] fov scale x%g\n",k);}
+double runtime_fov_scale(void){return fov_k;}
+int runtime_fov_scale_locked(void){return 0;}
+int runtime_fov_available(void){return 1;}
+void runtime_far_scale_set(double k){far_k=k;if(far_factor)factor_store(far_factor,k);fprintf(stderr,"[totk] far scale x%g\n",k);}
+double runtime_far_scale(void){return far_k;}
+int runtime_far_scale_locked(void){return 0;}
+#endif
 #endif
 /* The settings panel's resolution (runtime.h OUTPUT_MODE_*): 1080p, 1080p with the MetalFX output scaler, or the game's
    canvas and UI at the native size (up to the swapchain's, 2K), the same with the MetalFX output scaler up to the window (a 4K
@@ -876,6 +923,7 @@ void runtime_game_patches(Module *m) {
     patch_output_res(m);
 #if defined(TOTK_GAME_V121)
     patch_dof(m);
+    patch_fov_far(m);
 #endif
     patch_slowmo_bounce(m);
 #if defined(TOTK_GAME_V121)
